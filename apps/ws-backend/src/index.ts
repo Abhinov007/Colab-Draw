@@ -52,7 +52,7 @@ wss.on('connection', (ws, request) => {
 
   console.log(`User connected: ${userId}`)
 
-  ws.on('message', (data) => {
+  ws.on('message', async (data) => {
     try {
       const parsed = JSON.parse(data.toString())
 
@@ -84,6 +84,20 @@ wss.on('connection', (ws, request) => {
         const usersInRoom = rooms.get(roomId)
 
         if (!usersInRoom) return
+
+        // Store message in DB first, then broadcast
+        try {
+          await prismaClient.chat.create({
+            data: {
+              roomId: parseInt(roomId),
+              userId,
+              message,
+            }
+          })
+        } catch (err) {
+          ws.send(JSON.stringify({ error: 'Failed to save message' }))
+          return
+        }
 
         usersInRoom.forEach((uid) => {
           const client = clients.get(uid)

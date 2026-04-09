@@ -4,6 +4,7 @@ import { JWT_SECRET } from "@repo/backend-common/config";
 import { middleware } from "./middleware";
 import { CreateRoomSchema, SignInSchema, CreateUserSchema } from "@repo/common/types";
 import { prismaClient } from "@repo/db/client";
+import bcrypt from "bcrypt";
 
 const app = express();
 app.use(express.json());
@@ -20,10 +21,13 @@ app.post("/signup", async (req, res) => {
     return res.status(400).json({ message: "Invalid request body" });
   }
 
+  // 🔐 Hash password
+  const hashedPassword = await bcrypt.hash(parsedData.data.password, 10);
+
   const user = await prismaClient.user.create({
     data: {
       email: parsedData.data.email,
-      password: parsedData.data.password,
+      password: hashedPassword, // ✅ store hashed password
       name: parsedData.data.name,
     },
   });
@@ -33,16 +37,18 @@ app.post("/signup", async (req, res) => {
   });
 });
 
+
 app.post("/signin", async (req, res) => {
   const parsedData = SignInSchema.safeParse(req.body);
+
   if (!parsedData.success) {
     return res.status(400).json({ message: "Invalid inputs" });
   }
 
-  const user = await prismaClient.user.findFirst({
+  // Find user by email ONLY
+  const user = await prismaClient.user.findUnique({
     where: {
       email: parsedData.data.email,
-      password: parsedData.data.password,
     },
   });
 
@@ -50,10 +56,25 @@ app.post("/signin", async (req, res) => {
     return res.status(403).json({ message: "Invalid credentials" });
   }
 
-  const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+  // Compare hashed password
+  const isValid = await bcrypt.compare(
+    parsedData.data.password,
+    user.password
+  );
+
+  if (!isValid) {
+    return res.status(403).json({ message: "Invalid credentials" });
+  }
+
+  // Generate JWT
+  const token = jwt.sign(
+    { userId: user.id },
+    JWT_SECRET,
+    { expiresIn: "7d" } 
+  );
+
   res.json({ token });
 });
-
 app.post("/room", middleware, async (req, res) => {
   const data = CreateRoomSchema.safeParse(req.body);
 
