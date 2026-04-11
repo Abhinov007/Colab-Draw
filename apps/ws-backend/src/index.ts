@@ -56,7 +56,7 @@ wss.on('connection', (ws, request) => {
     try {
       const parsed = JSON.parse(data.toString())
 
-      const { type, roomId, message } = parsed
+      const { type, roomId, message, shape } = parsed
 
       // ✅ JOIN ROOM
       if (type === 'join') {
@@ -77,6 +77,34 @@ wss.on('connection', (ws, request) => {
       if (type === 'leave') {
         rooms.get(roomId)?.delete(userId)
         userRooms.get(userId)?.delete(roomId)
+      }
+
+      // ✅ DRAW SHAPE
+      if (type === 'draw') {
+        const usersInRoom = rooms.get(roomId)
+        if (!usersInRoom) return
+
+        try {
+          await prismaClient.shape.create({
+            data: {
+              roomId: parseInt(roomId),
+              userId,
+              type: shape.type,
+              data: JSON.stringify(shape.data),
+            }
+          })
+        } catch (err) {
+          ws.send(JSON.stringify({ error: 'Failed to save shape' }))
+          return
+        }
+
+        usersInRoom.forEach((uid) => {
+          if (uid === userId) return
+          const client = clients.get(uid)
+          if (client && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'draw', roomId, shape }))
+          }
+        })
       }
 
       // ✅ SEND MESSAGE TO ROOM

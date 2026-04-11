@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { JWT_SECRET } from "@repo/backend-common/config";
 import { middleware } from "./middleware";
@@ -8,6 +8,15 @@ import bcrypt from "bcrypt";
 
 const app = express();
 app.use(express.json());
+
+// CORS
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  if (req.method === "OPTIONS") { res.sendStatus(200); return; }
+  next();
+});
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
@@ -73,7 +82,7 @@ app.post("/signin", async (req, res) => {
     { expiresIn: "7d" } 
   );
 
-  res.json({ token });
+  res.json({ token, userId: user.id });
 });
 app.post("/room", middleware, async (req, res) => {
   const data = CreateRoomSchema.safeParse(req.body);
@@ -95,6 +104,25 @@ app.post("/room", middleware, async (req, res) => {
   res.json({
     roomId: room.id,
   });
+});
+
+app.get("/rooms", middleware, async (req, res) => {
+  const rooms = await prismaClient.room.findMany({ orderBy: { createAt: "desc" } });
+  res.json({ rooms });
+});
+
+app.get("/room/slug/:slug", middleware, async (req: Request<{ slug: string }>, res) => {
+  const room = await prismaClient.room.findUnique({ where: { slug: req.params.slug } });
+  if (!room) return res.status(404).json({ message: "Room not found" });
+  res.json({ room });
+});
+
+app.get("/room/:roomId/shapes", middleware, async (req: Request<{ roomId: string }>, res) => {
+  const shapes = await prismaClient.shape.findMany({
+    where: { roomId: parseInt(req.params.roomId) },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json({ shapes });
 });
 
 app.listen(3001, () => {
