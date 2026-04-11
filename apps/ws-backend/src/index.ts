@@ -63,6 +63,9 @@ wss.on('connection', (ws, request) => {
         if (!rooms.has(roomId)) {
           rooms.set(roomId, new Set())
         }
+        if (!userRooms.has(userId)) {
+          userRooms.set(userId, new Set())
+        }
 
         rooms.get(roomId)!.add(userId)
         userRooms.get(userId)!.add(roomId)
@@ -84,26 +87,25 @@ wss.on('connection', (ws, request) => {
         const usersInRoom = rooms.get(roomId)
         if (!usersInRoom) return
 
-        try {
-          await prismaClient.shape.create({
-            data: {
-              roomId: parseInt(roomId),
-              userId,
-              type: shape.type,
-              data: JSON.stringify(shape.data),
-            }
-          })
-        } catch (err) {
-          ws.send(JSON.stringify({ error: 'Failed to save shape' }))
-          return
-        }
-
+        // Broadcast immediately — don't block on DB
         usersInRoom.forEach((uid) => {
           if (uid === userId) return
           const client = clients.get(uid)
           if (client && client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: 'draw', roomId, shape }))
           }
+        })
+
+        // Save to DB in background (non-blocking)
+        prismaClient.shape.create({
+          data: {
+            roomId: parseInt(roomId),
+            userId,
+            type: shape.type,
+            data: JSON.stringify(shape.data),
+          }
+        }).catch((err) => {
+          console.error('Failed to save shape to DB:', err)
         })
       }
 
@@ -148,6 +150,9 @@ wss.on('connection', (ws, request) => {
   // ✅ HANDLE DISCONNECT
   ws.on('close', () => {
     console.log(`User disconnected: ${userId}`)
+
+    // If this socket was already replaced by a newer connection, don't wipe new state
+    if (clients.get(userId) !== ws) return
 
     const joinedRooms = userRooms.get(userId)
 

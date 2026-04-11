@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import styles from "./page.module.css";
 
-type Tool = "pencil" | "rect" | "circle" | "eraser";
+type Tool = "pencil" | "rect" | "circle";
 
 interface Point { x: number; y: number }
 interface RectData { x: number; y: number; width: number; height: number }
@@ -23,6 +23,8 @@ export default function RoomPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const shapesRef = useRef<Shape[]>([]);
+  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unmountedRef = useRef(false);
   const isDrawing = useRef(false);
   const startPos = useRef<Point>({ x: 0, y: 0 });
   const pencilPoints = useRef<Point[]>([]);
@@ -55,17 +57,6 @@ export default function RoomPage() {
       ctx.moveTo(d.points[0].x, d.points[0].y);
       d.points.forEach((p) => ctx.lineTo(p.x, p.y));
       ctx.stroke();
-    } else if (shape.type === "eraser") {
-      const d = shape.data as PencilData;
-      if (d.points.length < 2) return;
-      ctx.save();
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.lineWidth = 20;
-      ctx.beginPath();
-      ctx.moveTo(d.points[0].x, d.points[0].y);
-      d.points.forEach((p) => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
-      ctx.restore();
     }
   }, []);
 
@@ -125,26 +116,47 @@ export default function RoomPage() {
       })
       .catch(() => {});
 
-    // Connect WebSocket
-    const ws = new WebSocket(`ws://localhost:8080?token=${token}`);
-    wsRef.current = ws;
+    // Connect WebSocket with auto-reconnect
+    function connect() {
+      if (unmountedRef.current) return;
 
-    ws.onopen = () => {
-      setConnected(true);
-      ws.send(JSON.stringify({ type: "join", roomId }));
+      const ws = new WebSocket(`ws://localhost:8080?token=${token}`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        ws.send(JSON.stringify({ type: "join", roomId }));
+        console.log("[WS] Connected and joined room", roomId);
+      };
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        console.log("[WS] Received:", msg);
+        if (msg.type === "draw") {
+          shapesRef.current.push(msg.shape);
+          redrawCanvas();
+        }
+      };
+
+      ws.onerror = (e) => console.error("[WS] Error:", e);
+
+      ws.onclose = (e) => {
+        setConnected(false);
+        console.warn(`[WS] Disconnected — code=${e.code} reason="${e.reason}" wasClean=${e.wasClean}`);
+        if (!unmountedRef.current) {
+          reconnectRef.current = setTimeout(connect, 2000);
+        }
+      };
+    }
+
+    unmountedRef.current = false;
+    connect();
+
+    return () => {
+      unmountedRef.current = true;
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      wsRef.current?.close();
     };
-
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "draw") {
-        shapesRef.current.push(msg.shape);
-        redrawCanvas();
-      }
-    };
-
-    ws.onclose = () => setConnected(false);
-
-    return () => ws.close();
   }, [roomId, router, redrawCanvas]);
 
   const getPos = (e: React.MouseEvent<HTMLCanvasElement>): Point => {
@@ -156,7 +168,7 @@ export default function RoomPage() {
     isDrawing.current = true;
     const pos = getPos(e);
     startPos.current = pos;
-    if (tool === "pencil" || tool === "eraser") pencilPoints.current = [pos];
+    if (tool === "pencil") pencilPoints.current = [pos];
     const ctx = getCtx();
     const canvas = canvasRef.current;
     if (ctx && canvas) {
@@ -194,16 +206,6 @@ export default function RoomPage() {
       ctx.moveTo(pencilPoints.current[0].x, pencilPoints.current[0].y);
       pencilPoints.current.forEach((p) => ctx.lineTo(p.x, p.y));
       ctx.stroke();
-    } else if (tool === "eraser") {
-      pencilPoints.current.push(pos);
-      ctx.save();
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.lineWidth = 20;
-      ctx.beginPath();
-      ctx.moveTo(pencilPoints.current[0].x, pencilPoints.current[0].y);
-      pencilPoints.current.forEach((p) => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
-      ctx.restore();
     }
   };
 
@@ -229,8 +231,6 @@ export default function RoomPage() {
         Math.pow(pos.x - startPos.current.x, 2) + Math.pow(pos.y - startPos.current.y, 2)
       );
       shape = { type: "circle", data: { cx: startPos.current.x, cy: startPos.current.y, radius } };
-    } else if (tool === "eraser") {
-      shape = { type: "eraser", data: { points: [...pencilPoints.current, pos] } };
     } else {
       shape = { type: "pencil", data: { points: [...pencilPoints.current, pos] } };
     }
@@ -282,13 +282,6 @@ export default function RoomPage() {
           >
             ○ Circle
           </button>
-          <button
-            className={`${styles.toolBtn} ${tool === "eraser" ? styles.active : ""}`}
-            onClick={() => setTool("eraser")}
-            title="Eraser"
-          >
-            ◻ Erase
-          </button>
         </div>
 
         <div className={`${styles.status} ${connected ? styles.online : styles.offline}`}>
@@ -301,8 +294,7 @@ export default function RoomPage() {
         <canvas
           ref={canvasRef}
           className={styles.canvas}
-          style={{ cursor: tool === "eraser" ? "cell" : "crosshair" }}
-          onMouseDown={handleMouseDown}
+onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
