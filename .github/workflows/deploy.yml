@@ -1,0 +1,46 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/colab-draw
+
+            # Pull latest code
+            git pull origin main
+
+            # Install dependencies
+            pnpm install
+
+            # Write env files
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > apps/http-backend/.env
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> apps/http-backend/.env
+
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > apps/ws-backend/.env
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> apps/ws-backend/.env
+
+            # Build both backends
+            cd apps/http-backend && pnpm run build
+            cd ~/colab-draw/apps/ws-backend && pnpm run build
+
+            # Restart with PM2
+            pm2 restart http-backend || pm2 start ~/colab-draw/apps/http-backend/dist/index.js --name http-backend
+            pm2 restart ws-backend   || pm2 start ~/colab-draw/apps/ws-backend/dist/index.js --name ws-backend
+
+            pm2 save
