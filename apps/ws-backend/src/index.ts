@@ -97,8 +97,10 @@ wss.on('connection', (ws, request) => {
         })
 
         // Save to DB in background (non-blocking)
+        // Use the client-generated id so it matches what's held in shapesRef on all clients
         prismaClient.shape.create({
           data: {
+            id: shape.id,
             roomId: parseInt(roomId),
             userId,
             type: shape.type,

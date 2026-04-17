@@ -119,7 +119,7 @@ app.get("/room/slug/:slug", middleware, async (req: Request<{ slug: string }>, r
 
 app.get("/room/:roomId/shapes", middleware, async (req: Request<{ roomId: string }>, res) => {
   const shapes = await prismaClient.shape.findMany({
-    where: { roomId: parseInt(req.params.roomId) },
+    where: { roomId: parseInt(req.params.roomId), isDeleted: false },
     orderBy: { createdAt: "asc" },
   });
   res.json({ shapes });

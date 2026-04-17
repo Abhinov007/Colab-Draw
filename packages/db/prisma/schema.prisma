@@ -42,6 +42,7 @@ model Shape {
   type      String
   data      String
   createdAt DateTime @default(now())
+  isDeleted Boolean  @default(false)
   room      Room     @relation(fields: [roomId], references: [id])
   user      User     @relation(fields: [userId], references: [id])
 }

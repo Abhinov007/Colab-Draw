@@ -10,7 +10,13 @@ interface Point { x: number; y: number }
 interface RectData { x: number; y: number; width: number; height: number }
 interface CircleData { cx: number; cy: number; radius: number }
 interface PencilData { points: Point[] }
-interface Shape { type: Tool; data: RectData | CircleData | PencilData }
+
+// Shape now carries a stable client-generated id used for Map keying and DB storage
+interface Shape {
+  id: string;
+  type: Tool;
+  data: RectData | CircleData | PencilData;
+}
 
 const STROKE_COLOR = "#6366f1";
 const STROKE_WIDTH = 2;
@@ -22,7 +28,8 @@ export default function RoomPage() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const shapesRef = useRef<Shape[]>([]);
+  // Map<id, Shape> — O(1) lookup needed for erase events in Phase 1
+  const shapesRef = useRef<Map<string, Shape>>(new Map());
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmountedRef = useRef(false);
   const isDrawing = useRef(false);
@@ -60,6 +67,7 @@ export default function RoomPage() {
     }
   }, []);
 
+  // Maps iterate in insertion order — redraw order is preserved
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = getCtx();
@@ -89,17 +97,18 @@ export default function RoomPage() {
     const token = localStorage.getItem("token");
     if (!token) { router.push("/"); return; }
 
-    // Load existing shapes
+    // Load existing shapes — hydrate id from DB row
     fetch(`http://localhost:3001/room/${roomId}/shapes`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((data) => {
         if (data.shapes) {
-          shapesRef.current = data.shapes.map((s: { type: Tool; data: string }) => ({
-            type: s.type,
-            data: JSON.parse(s.data),
-          }));
+          const map = new Map<string, Shape>();
+          data.shapes.forEach((s: { id: string; type: Tool; data: string }) => {
+            map.set(s.id, { id: s.id, type: s.type, data: JSON.parse(s.data) });
+          });
+          shapesRef.current = map;
           redrawCanvas();
         }
       })
@@ -133,7 +142,8 @@ export default function RoomPage() {
         const msg = JSON.parse(e.data);
         console.log("[WS] Received:", msg);
         if (msg.type === "draw") {
-          shapesRef.current.push(msg.shape);
+          // Insert by id so Phase 1 erase events can remove by id
+          shapesRef.current.set(msg.shape.id, msg.shape);
           redrawCanvas();
         }
       };
@@ -214,10 +224,15 @@ export default function RoomPage() {
     isDrawing.current = false;
     const pos = getPos(e);
 
+    // Generate a stable UUID on the client — the same id flows into shapesRef,
+    // the WS broadcast, and the DB row so all three stay in sync
+    const id = crypto.randomUUID();
+
     let shape: Shape;
 
     if (tool === "rect") {
       shape = {
+        id,
         type: "rect",
         data: {
           x: startPos.current.x,
@@ -230,12 +245,12 @@ export default function RoomPage() {
       const radius = Math.sqrt(
         Math.pow(pos.x - startPos.current.x, 2) + Math.pow(pos.y - startPos.current.y, 2)
       );
-      shape = { type: "circle", data: { cx: startPos.current.x, cy: startPos.current.y, radius } };
+      shape = { id, type: "circle", data: { cx: startPos.current.x, cy: startPos.current.y, radius } };
     } else {
-      shape = { type: "pencil", data: { points: [...pencilPoints.current, pos] } };
+      shape = { id, type: "pencil", data: { points: [...pencilPoints.current, pos] } };
     }
 
-    shapesRef.current.push(shape);
+    shapesRef.current.set(shape.id, shape);
     redrawCanvas();
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -294,7 +309,7 @@ export default function RoomPage() {
         <canvas
           ref={canvasRef}
           className={styles.canvas}
-onMouseDown={handleMouseDown}
+          onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
