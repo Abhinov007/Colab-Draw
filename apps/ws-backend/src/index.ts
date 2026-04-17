@@ -56,7 +56,7 @@ wss.on('connection', (ws, request) => {
     try {
       const parsed = JSON.parse(data.toString())
 
-      const { type, roomId, message, shape } = parsed
+      const { type, roomId, message, shape, deletedShapeIds } = parsed
 
       // ✅ JOIN ROOM
       if (type === 'join') {
@@ -108,6 +108,29 @@ wss.on('connection', (ws, request) => {
           }
         }).catch((err) => {
           console.error('Failed to save shape to DB:', err)
+        })
+      }
+
+      // ✅ ERASE SHAPES
+      if (type === 'erase') {
+        const usersInRoom = rooms.get(roomId)
+        if (!usersInRoom) return
+
+        // Broadcast immediately to all other users in the room
+        usersInRoom.forEach((uid) => {
+          if (uid === userId) return
+          const client = clients.get(uid)
+          if (client && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'erase', roomId, deletedShapeIds }))
+          }
+        })
+
+        // Soft-delete in DB (non-blocking)
+        prismaClient.shape.updateMany({
+          where: { id: { in: deletedShapeIds } },
+          data: { isDeleted: true },
+        }).catch((err) => {
+          console.error('Failed to soft-delete shapes:', err)
         })
       }
 

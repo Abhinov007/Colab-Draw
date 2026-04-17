@@ -220,7 +220,10 @@ pnpm run dev
 Shapes drawn by any user in the room appear on all other connected users' canvases in real time.
 
 ---
+<<<<<<< HEAD
 
+=======
+>>>>>>> 794f71b934fdfe40e70260557f82724bbc66a21c
 ## Contributing
 
 1. Fork the repo

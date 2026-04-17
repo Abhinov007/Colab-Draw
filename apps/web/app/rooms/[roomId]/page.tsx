@@ -3,23 +3,29 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import styles from "./page.module.css";
+import {
+  hitTestRect,
+  hitTestCircle,
+  hitTestPencil,
+  type RectData,
+  type CircleData,
+  type PencilData,
+} from "@/lib/eraser-hit";
 
-type Tool = "pencil" | "rect" | "circle";
+type Tool = "pencil" | "rect" | "circle" | "eraser";
 
 interface Point { x: number; y: number }
-interface RectData { x: number; y: number; width: number; height: number }
-interface CircleData { cx: number; cy: number; radius: number }
-interface PencilData { points: Point[] }
 
-// Shape now carries a stable client-generated id used for Map keying and DB storage
+// Shape carries a stable client-generated id used for Map keying, WS events, and DB storage
 interface Shape {
   id: string;
-  type: Tool;
+  type: "pencil" | "rect" | "circle";
   data: RectData | CircleData | PencilData;
 }
 
 const STROKE_COLOR = "#6366f1";
 const STROKE_WIDTH = 2;
+const ERASER_RADIUS = 20; // px
 
 export default function RoomPage() {
   const router = useRouter();
@@ -28,7 +34,7 @@ export default function RoomPage() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  // Map<id, Shape> — O(1) lookup needed for erase events in Phase 1
+  // Map<id, Shape> — O(1) lookup for erase events
   const shapesRef = useRef<Map<string, Shape>>(new Map());
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmountedRef = useRef(false);
@@ -36,6 +42,10 @@ export default function RoomPage() {
   const startPos = useRef<Point>({ x: 0, y: 0 });
   const pencilPoints = useRef<Point[]>([]);
   const snapshotRef = useRef<ImageData | null>(null);
+  // Accumulates erased shape ids during a single eraser drag — flushed on mouseUp/Leave
+  const erasedIdsRef = useRef<string[]>([]);
+  // Ref to the eraser cursor overlay div — updated via direct DOM for perf (no re-render)
+  const cursorDivRef = useRef<HTMLDivElement>(null);
 
   const [tool, setTool] = useState<Tool>("pencil");
   const [connected, setConnected] = useState(false);
@@ -67,7 +77,7 @@ export default function RoomPage() {
     }
   }, []);
 
-  // Maps iterate in insertion order — redraw order is preserved
+  // Maps iterate in insertion order — draw order is stable
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = getCtx();
@@ -105,7 +115,7 @@ export default function RoomPage() {
       .then((data) => {
         if (data.shapes) {
           const map = new Map<string, Shape>();
-          data.shapes.forEach((s: { id: string; type: Tool; data: string }) => {
+          data.shapes.forEach((s: { id: string; type: "pencil" | "rect" | "circle"; data: string }) => {
             map.set(s.id, { id: s.id, type: s.type, data: JSON.parse(s.data) });
           });
           shapesRef.current = map;
@@ -141,14 +151,22 @@ export default function RoomPage() {
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         console.log("[WS] Received:", msg);
+
         if (msg.type === "draw") {
-          // Insert by id so Phase 1 erase events can remove by id
           shapesRef.current.set(msg.shape.id, msg.shape);
+          redrawCanvas();
+        }
+
+        // Task 1.4 — receive erase from another user
+        if (msg.type === "erase") {
+          (msg.deletedShapeIds as string[]).forEach((id) => {
+            shapesRef.current.delete(id);
+          });
           redrawCanvas();
         }
       };
 
-      ws.onerror = (e) => console.error("[WS] Error:", e);
+      ws.onerror = (e) => console.error("[WS] Error:", (e as ErrorEvent).message || "connection failed");
 
       ws.onclose = (e) => {
         setConnected(false);
@@ -174,10 +192,28 @@ export default function RoomPage() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // Flush accumulated erased ids over WS and reset the buffer
+  const flushErase = useCallback(() => {
+    if (erasedIdsRef.current.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "erase",
+        roomId,
+        deletedShapeIds: erasedIdsRef.current,
+      }));
+    }
+    erasedIdsRef.current = [];
+  }, [roomId]);
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     isDrawing.current = true;
     const pos = getPos(e);
     startPos.current = pos;
+
+    if (tool === "eraser") {
+      erasedIdsRef.current = [];
+      return; // no snapshot needed for eraser
+    }
+
     if (tool === "pencil") pencilPoints.current = [pos];
     const ctx = getCtx();
     const canvas = canvasRef.current;
@@ -187,10 +223,42 @@ export default function RoomPage() {
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pos = getPos(e);
+
+    // Task 1.5 — update eraser cursor circle via direct DOM (avoids re-render on every move)
+    if (tool === "eraser" && cursorDivRef.current) {
+      cursorDivRef.current.style.left = `${pos.x - ERASER_RADIUS}px`;
+      cursorDivRef.current.style.top = `${pos.y - ERASER_RADIUS}px`;
+      cursorDivRef.current.style.display = "block";
+    }
+
     if (!isDrawing.current) return;
+
+    // Task 1.3 — eraser hit detection on every mousemove
+    if (tool === "eraser") {
+      const eraser = { cx: pos.x, cy: pos.y, radius: ERASER_RADIUS };
+      let changed = false;
+
+      shapesRef.current.forEach((shape, id) => {
+        let hit = false;
+        if (shape.type === "rect")   hit = hitTestRect(eraser, shape.data as RectData);
+        else if (shape.type === "circle") hit = hitTestCircle(eraser, shape.data as CircleData);
+        else if (shape.type === "pencil") hit = hitTestPencil(eraser, shape.data as PencilData);
+
+        if (hit) {
+          erasedIdsRef.current.push(id);
+          shapesRef.current.delete(id);
+          changed = true;
+        }
+      });
+
+      if (changed) redrawCanvas();
+      return;
+    }
+
+    // Drawing tools — restore snapshot then draw preview
     const ctx = getCtx();
     if (!ctx || !snapshotRef.current) return;
-    const pos = getPos(e);
 
     ctx.putImageData(snapshotRef.current, 0, 0);
     ctx.strokeStyle = STROKE_COLOR;
@@ -222,12 +290,14 @@ export default function RoomPage() {
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing.current) return;
     isDrawing.current = false;
+
+    if (tool === "eraser") {
+      flushErase();
+      return;
+    }
+
     const pos = getPos(e);
-
-    // Generate a stable UUID on the client — the same id flows into shapesRef,
-    // the WS broadcast, and the DB row so all three stay in sync
     const id = crypto.randomUUID();
-
     let shape: Shape;
 
     if (tool === "rect") {
@@ -259,8 +329,19 @@ export default function RoomPage() {
   };
 
   const handleMouseLeave = () => {
+    // Hide eraser cursor when leaving canvas
+    if (cursorDivRef.current) {
+      cursorDivRef.current.style.display = "none";
+    }
+
     if (isDrawing.current) {
       isDrawing.current = false;
+
+      if (tool === "eraser") {
+        flushErase(); // send whatever was erased before leaving
+        return;
+      }
+
       const ctx = getCtx();
       if (ctx && snapshotRef.current) ctx.putImageData(snapshotRef.current, 0, 0);
     }
@@ -297,6 +378,13 @@ export default function RoomPage() {
           >
             ○ Circle
           </button>
+          <button
+            className={`${styles.toolBtn} ${tool === "eraser" ? styles.active : ""}`}
+            onClick={() => setTool("eraser")}
+            title="Eraser"
+          >
+            ⌫ Erase
+          </button>
         </div>
 
         <div className={`${styles.status} ${connected ? styles.online : styles.offline}`}>
@@ -304,15 +392,31 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className={styles.canvasWrapper}>
+      {/* Canvas — position:relative so the eraser cursor div is positioned inside it */}
+      <div className={styles.canvasWrapper} style={{ position: "relative" }}>
         <canvas
           ref={canvasRef}
           className={styles.canvas}
+          style={{ cursor: tool === "eraser" ? "none" : "default" }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
+          suppressHydrationWarning
+        />
+
+        {/* Task 1.5 — eraser cursor circle, updated via direct DOM ref (no re-render) */}
+        <div
+          ref={cursorDivRef}
+          style={{
+            display: "none",
+            position: "absolute",
+            width: ERASER_RADIUS * 2,
+            height: ERASER_RADIUS * 2,
+            borderRadius: "50%",
+            border: "2px solid #64748b",
+            pointerEvents: "none",
+          }}
         />
       </div>
     </div>
