@@ -71,7 +71,7 @@ export default function RoomPage() {
       const d = shape.data as PencilData;
       if (d.points.length < 2) return;
       ctx.beginPath();
-      ctx.moveTo(d.points[0].x, d.points[0].y);
+      ctx.moveTo(d.points[0]!.x, d.points[0]!.y);
       d.points.forEach((p) => ctx.lineTo(p.x, p.y));
       ctx.stroke();
     }
@@ -139,30 +139,43 @@ export default function RoomPage() {
     function connect() {
       if (unmountedRef.current) return;
 
-      const ws = new WebSocket(`ws://localhost:8080?token=${token}`);
+      // ── Security: token is NOT in the URL (would leak to server/proxy logs).
+      // Instead we send it as the very first message after the connection opens.
+      const ws = new WebSocket("ws://localhost:8080");
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setConnected(true);
-        ws.send(JSON.stringify({ type: "join", roomId }));
-        console.log("[WS] Connected and joined room", roomId);
+        // Step 1 — authenticate
+        ws.send(JSON.stringify({ type: "auth", token }));
+        console.log("[WS] Connected, sending auth");
       };
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         console.log("[WS] Received:", msg);
 
+        // Step 2 — server confirms auth, now join the room
+        if (msg.type === "authenticated") {
+          setConnected(true);
+          ws.send(JSON.stringify({ type: "join", roomId }));
+          console.log("[WS] Authenticated, joining room", roomId);
+          return;
+        }
+
         if (msg.type === "draw") {
           shapesRef.current.set(msg.shape.id, msg.shape);
           redrawCanvas();
         }
 
-        // Task 1.4 — receive erase from another user
         if (msg.type === "erase") {
           (msg.deletedShapeIds as string[]).forEach((id) => {
             shapesRef.current.delete(id);
           });
           redrawCanvas();
+        }
+
+        if (msg.type === "error") {
+          console.error("[WS] Server error:", msg.message);
         }
       };
 
@@ -281,7 +294,7 @@ export default function RoomPage() {
     } else if (tool === "pencil") {
       pencilPoints.current.push(pos);
       ctx.beginPath();
-      ctx.moveTo(pencilPoints.current[0].x, pencilPoints.current[0].y);
+      ctx.moveTo(pencilPoints.current[0]!.x, pencilPoints.current[0]!.y);
       pencilPoints.current.forEach((p) => ctx.lineTo(p.x, p.y));
       ctx.stroke();
     }

@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import rateLimit from "express-rate-limit";
 import { JWT_SECRET } from "@repo/backend-common/config";
 import { middleware } from "./middleware";
 import { CreateRoomSchema, SignInSchema, CreateUserSchema } from "@repo/common/types";
@@ -9,20 +10,37 @@ import bcrypt from "bcrypt";
 const app = express();
 app.use(express.json());
 
-// CORS
+// ── CORS ─────────────────────────────────────────────────────────────────────
+// Allow only the frontend origin. In production set ALLOWED_ORIGIN in env.
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? "http://localhost:3000";
+
 app.use((req: Request, res: Response, next: NextFunction) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin === ALLOWED_ORIGIN) {
+    res.header("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+  }
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Vary", "Origin");
   if (req.method === "OPTIONS") { res.sendStatus(200); return; }
   next();
+});
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Applies only to auth endpoints to block brute-force attempts.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,                   // max 10 attempts per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many attempts, please try again after 15 minutes" },
 });
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-app.post("/signup", async (req, res) => {
+app.post("/signup", authLimiter, async (req, res) => {
   const parsedData = CreateUserSchema.safeParse(req.body);
 
   if (!parsedData.success) {
@@ -47,7 +65,7 @@ app.post("/signup", async (req, res) => {
 });
 
 
-app.post("/signin", async (req, res) => {
+app.post("/signin", authLimiter, async (req, res) => {
   const parsedData = SignInSchema.safeParse(req.body);
 
   if (!parsedData.success) {

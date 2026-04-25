@@ -61,10 +61,10 @@ export function hitTestPencil(eraser: EraserCircle, pencil: PencilData): boolean
   const pts = pencil.points
   if (pts.length === 0) return false
   if (pts.length === 1) {
-    return Math.hypot(eraser.cx - pts[0].x, eraser.cy - pts[0].y) <= eraser.radius
+    return Math.hypot(eraser.cx - pts[0]!.x, eraser.cy - pts[0]!.y) <= eraser.radius
   }
   for (let i = 0; i < pts.length - 1; i++) {
-    if (pointToSegmentDist({ x: eraser.cx, y: eraser.cy }, pts[i], pts[i + 1]) <= eraser.radius) {
+    if (pointToSegmentDist({ x: eraser.cx, y: eraser.cy }, pts[i]!, pts[i + 1]!) <= eraser.radius) {
       return true
     }
   }
