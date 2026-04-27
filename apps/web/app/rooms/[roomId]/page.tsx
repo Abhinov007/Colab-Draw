@@ -50,6 +50,14 @@ export default function RoomPage() {
   const [tool, setTool] = useState<Tool>("pencil");
   const [connected, setConnected] = useState(false);
   const [roomSlug, setRoomSlug] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Invite modal
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"EDITOR" | "VIEWER">("EDITOR");
+  const [inviteStatus, setInviteStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [inviting, setInviting] = useState(false);
 
   const getCtx = () => canvasRef.current?.getContext("2d") ?? null;
 
@@ -124,14 +132,18 @@ export default function RoomPage() {
       })
       .catch(() => {});
 
-    // Fetch room name
+    // Fetch room name + detect if current user is admin
+    const userId = localStorage.getItem("userId");
     fetch(`http://localhost:3001/rooms`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((data) => {
         const room = data.rooms?.find((r: { id: number }) => r.id === parseInt(roomId));
-        if (room) setRoomSlug(room.slug);
+        if (room) {
+          setRoomSlug(room.slug);
+          setIsAdmin(String(room.adminId) === String(userId));
+        }
       })
       .catch(() => {});
 
@@ -360,6 +372,31 @@ export default function RoomPage() {
     }
   };
 
+  async function handleInvite() {
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    setInviteStatus(null);
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`http://localhost:3001/room/${roomId}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setInviteStatus({ ok: true, msg: `✓ ${data.message}` });
+        setInviteEmail("");
+      } else {
+        setInviteStatus({ ok: false, msg: data.message ?? "Invite failed" });
+      }
+    } catch {
+      setInviteStatus({ ok: false, msg: "Network error" });
+    } finally {
+      setInviting(false);
+    }
+  }
+
   return (
     <div className={styles.shell}>
       {/* Toolbar */}
@@ -400,6 +437,16 @@ export default function RoomPage() {
           </button>
         </div>
 
+        {isAdmin && (
+          <button
+            className={styles.inviteBtn}
+            onClick={() => { setShowInvite(true); setInviteStatus(null); }}
+            title="Invite collaborators"
+          >
+            + Invite
+          </button>
+        )}
+
         <div className={`${styles.status} ${connected ? styles.online : styles.offline}`}>
           {connected ? "● Live" : "○ Connecting..."}
         </div>
@@ -432,6 +479,62 @@ export default function RoomPage() {
           }}
         />
       </div>
+
+      {/* Invite Modal */}
+      {showInvite && (
+        <div className={styles.modalOverlay} onClick={() => setShowInvite(false)}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <h2 className={styles.modalTitle}>Invite Collaborator</h2>
+            <p className={styles.modalSub}>They'll get an in-app notification instantly.</p>
+
+            <label className={styles.modalLabel}>Email</label>
+            <input
+              className={styles.modalInput}
+              type="email"
+              placeholder="colleague@example.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+              autoFocus
+            />
+
+            <label className={styles.modalLabel}>Role</label>
+            <div className={styles.roleToggle}>
+              <button
+                className={`${styles.roleBtn} ${inviteRole === "EDITOR" ? styles.roleActive : ""}`}
+                onClick={() => setInviteRole("EDITOR")}
+              >
+                ✏️ Editor
+              </button>
+              <button
+                className={`${styles.roleBtn} ${inviteRole === "VIEWER" ? styles.roleActive : ""}`}
+                onClick={() => setInviteRole("VIEWER")}
+              >
+                👁 Viewer
+              </button>
+            </div>
+
+            {inviteStatus && (
+              <p className={inviteStatus.ok ? styles.successText : styles.errorText}>
+                {inviteStatus.msg}
+              </p>
+            )}
+
+            <div className={styles.modalActions}>
+              <button
+                className={styles.inviteSubmitBtn}
+                onClick={handleInvite}
+                disabled={inviting || !inviteEmail.trim()}
+              >
+                {inviting ? "Sending..." : "Send Invite"}
+              </button>
+              <button className={styles.cancelBtn} onClick={() => setShowInvite(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

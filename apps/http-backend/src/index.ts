@@ -135,6 +135,30 @@ app.get("/room/slug/:slug", middleware, async (req: Request<{ slug: string }>, r
   res.json({ room });
 });
 
+// ── Get the calling user's role in a room ────────────────────────────────────
+// Returns { role: "OWNER" | "EDITOR" | "VIEWER" }
+// OWNER  = the room admin (always can edit)
+// EDITOR = invited with editor rights
+// VIEWER = invited as read-only
+app.get("/room/:roomId/my-role", middleware, async (req: Request<{ roomId: string }>, res) => {
+  // @ts-ignore
+  const userId: string = req.userId;
+  const roomId = parseInt(req.params.roomId);
+
+  const room = await prismaClient.room.findUnique({ where: { id: roomId }, select: { adminId: true } });
+  if (!room) return res.status(404).json({ message: "Room not found" });
+
+  if (room.adminId === userId) return res.json({ role: "OWNER" });
+
+  const member = await prismaClient.roomMember.findUnique({
+    where: { userId_roomId: { userId, roomId } },
+    select: { role: true },
+  });
+
+  if (!member) return res.status(403).json({ message: "Not a member of this room" });
+  return res.json({ role: member.role });
+});
+
 app.get("/room/:roomId/shapes", middleware, async (req: Request<{ roomId: string }>, res) => {
   const shapes = await prismaClient.shape.findMany({
     where: { roomId: parseInt(req.params.roomId), isDeleted: false },
