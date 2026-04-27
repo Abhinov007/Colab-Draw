@@ -125,7 +125,20 @@ app.post("/room", middleware, async (req, res) => {
 });
 
 app.get("/rooms", middleware, async (req, res) => {
-  const rooms = await prismaClient.room.findMany({ orderBy: { createAt: "desc" } });
+  // @ts-ignore
+  const userId: string = req.userId;
+
+  // Return only rooms the user created OR was invited to
+  const rooms = await prismaClient.room.findMany({
+    where: {
+      OR: [
+        { adminId: userId },
+        { members: { some: { userId } } },
+      ],
+    },
+    orderBy: { createAt: "desc" },
+  });
+
   res.json({ rooms });
 });
 
