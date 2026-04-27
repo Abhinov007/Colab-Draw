@@ -51,6 +51,7 @@ export default function RoomPage() {
   const [connected, setConnected] = useState(false);
   const [roomSlug, setRoomSlug] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [role, setRole] = useState<"OWNER" | "EDITOR" | "VIEWER" | null>(null);
 
   // Invite modal
   const [showInvite, setShowInvite] = useState(false);
@@ -130,6 +131,14 @@ export default function RoomPage() {
           redrawCanvas();
         }
       })
+      .catch(() => {});
+
+    // Fetch role for this room
+    fetch(`http://localhost:3001/room/${roomId}/my-role`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => { if (data.role) setRole(data.role); })
       .catch(() => {});
 
     // Fetch room name + detect if current user is admin
@@ -406,36 +415,40 @@ export default function RoomPage() {
         </button>
         <span className={styles.roomLabel}>{roomSlug || `Room #${roomId}`}</span>
 
-        <div className={styles.tools}>
-          <button
-            className={`${styles.toolBtn} ${tool === "pencil" ? styles.active : ""}`}
-            onClick={() => setTool("pencil")}
-            title="Pencil"
-          >
-            ✏️ Pencil
-          </button>
-          <button
-            className={`${styles.toolBtn} ${tool === "rect" ? styles.active : ""}`}
-            onClick={() => setTool("rect")}
-            title="Rectangle"
-          >
-            ▭ Rect
-          </button>
-          <button
-            className={`${styles.toolBtn} ${tool === "circle" ? styles.active : ""}`}
-            onClick={() => setTool("circle")}
-            title="Circle"
-          >
-            ○ Circle
-          </button>
-          <button
-            className={`${styles.toolBtn} ${tool === "eraser" ? styles.active : ""}`}
-            onClick={() => setTool("eraser")}
-            title="Eraser"
-          >
-            ⌫ Erase
-          </button>
-        </div>
+        {role === "VIEWER" ? (
+          <div className={styles.viewerBadge}>👁 View only</div>
+        ) : (
+          <div className={styles.tools}>
+            <button
+              className={`${styles.toolBtn} ${tool === "pencil" ? styles.active : ""}`}
+              onClick={() => setTool("pencil")}
+              title="Pencil"
+            >
+              ✏️ Pencil
+            </button>
+            <button
+              className={`${styles.toolBtn} ${tool === "rect" ? styles.active : ""}`}
+              onClick={() => setTool("rect")}
+              title="Rectangle"
+            >
+              ▭ Rect
+            </button>
+            <button
+              className={`${styles.toolBtn} ${tool === "circle" ? styles.active : ""}`}
+              onClick={() => setTool("circle")}
+              title="Circle"
+            >
+              ○ Circle
+            </button>
+            <button
+              className={`${styles.toolBtn} ${tool === "eraser" ? styles.active : ""}`}
+              onClick={() => setTool("eraser")}
+              title="Eraser"
+            >
+              ⌫ Erase
+            </button>
+          </div>
+        )}
 
         {isAdmin && (
           <button
@@ -457,7 +470,10 @@ export default function RoomPage() {
         <canvas
           ref={canvasRef}
           className={styles.canvas}
-          style={{ cursor: tool === "eraser" ? "none" : "default" }}
+          style={{
+            cursor: role === "VIEWER" ? "default" : tool === "eraser" ? "none" : "crosshair",
+            pointerEvents: role === "VIEWER" ? "none" : "auto",
+          }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}

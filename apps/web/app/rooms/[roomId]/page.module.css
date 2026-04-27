@@ -92,6 +92,19 @@
   height: 100%;
 }
 
+/* ── Viewer badge ── */
+.viewerBadge {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid #334155;
+  border-radius: 20px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
 /* ── Invite button in toolbar ── */
 .inviteBtn {
   background: #6366f1;

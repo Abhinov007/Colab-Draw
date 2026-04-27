@@ -54,6 +54,23 @@ function verifyToken(token: string): string | null {
   }
 }
 
+// ── Role helper ───────────────────────────────────────────────────────────────
+// Returns true if the user can draw/erase (OWNER or EDITOR), false if VIEWER
+async function checkCanEdit(userId: string, roomId: string): Promise<boolean> {
+  const room = await prismaClient.room.findUnique({
+    where: { id: parseInt(roomId) },
+    select: { adminId: true },
+  })
+  if (!room) return false
+  if (room.adminId === userId) return true   // OWNER always can edit
+
+  const member = await prismaClient.roomMember.findUnique({
+    where: { userId_roomId: { userId, roomId: parseInt(roomId) } },
+    select: { role: true },
+  })
+  return member?.role === 'EDITOR'
+}
+
 // ── Broadcast helper ──────────────────────────────────────────────────────────
 function broadcastToRoom(roomId: string, senderId: string, payload: object) {
   const usersInRoom = rooms.get(roomId)
@@ -171,6 +188,12 @@ wss.on('connection', (ws) => {
         return
       }
 
+      // Role check — VIEWERs cannot draw
+      if (!(await checkCanEdit(userId, roomId))) {
+        ws.send(JSON.stringify({ type: 'error', code: 403, message: 'Viewers cannot edit' }))
+        return
+      }
+
       // Broadcast first for minimum peer latency, then persist
       broadcastToRoom(roomId, userId, { type: 'draw', roomId, shape })
 
@@ -191,6 +214,12 @@ wss.on('connection', (ws) => {
     if (type === 'erase') {
       if (!rooms.get(roomId)?.has(userId)) {
         ws.send(JSON.stringify({ type: 'error', message: 'Not in room' }))
+        return
+      }
+
+      // Role check — VIEWERs cannot erase
+      if (!(await checkCanEdit(userId, roomId))) {
+        ws.send(JSON.stringify({ type: 'error', code: 403, message: 'Viewers cannot edit' }))
         return
       }
 
