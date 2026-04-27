@@ -7,23 +7,58 @@ datasource db {
 }
 
 model User {
-  id       String   @id @default(uuid())
-  email    String   @unique
-  password String
-  name     String
-  chats    Chat[]
-  rooms    Room[]
-  shapes   Shape[]
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  name          String
+  chats         Chat[]
+  rooms         Room[]
+  shapes        Shape[]
+  memberships   RoomMember[]
+  notifications Notification[]
 }
 
 model Room {
-  id       Int      @id @default(autoincrement())
-  slug     String   @unique
-  createAt DateTime @default(now())
+  id       Int          @id @default(autoincrement())
+  slug     String       @unique
+  createAt DateTime     @default(now())
   adminId  String
   chats    Chat[]
   shapes   Shape[]
-  admin    User     @relation(fields: [adminId], references: [id])
+  members  RoomMember[]
+  admin    User         @relation(fields: [adminId], references: [id])
+}
+
+// ── Role-based room membership ────────────────────────────────────────────────
+enum Role {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model RoomMember {
+  userId    String
+  roomId    Int
+  role      Role     @default(EDITOR)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  room Room @relation(fields: [roomId], references: [id])
+
+  @@id([userId, roomId])
+  @@index([roomId])
+}
+
+// ── In-app notifications ──────────────────────────────────────────────────────
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  message   String
+  roomId    Int?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
 }
 
 model Chat {

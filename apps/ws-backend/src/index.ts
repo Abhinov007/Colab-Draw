@@ -1,9 +1,39 @@
 import { WebSocketServer, WebSocket } from 'ws'
+import http from 'http'
 import jwt from 'jsonwebtoken'
 import { JWT_SECRET } from '@repo/backend-common/config'
 import { prismaClient } from '@repo/db/client'
 
-// ── Server ────────────────────────────────────────────────────────────────────
+// ── Internal HTTP server (port 8081) ─────────────────────────────────────────
+// Used by the HTTP backend to push live notifications to online users.
+// Never exposed to the internet — only reachable from within the same host/network.
+const internalServer = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/internal/notify') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      try {
+        const { userId, notification } = JSON.parse(body)
+        const clientWs = clients.get(String(userId))
+        if (clientWs?.readyState === WebSocket.OPEN) {
+          clientWs.send(JSON.stringify({ type: 'notification', notification }))
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ delivered: !!clientWs }))
+      } catch {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid JSON' }))
+      }
+    })
+    return
+  }
+  res.writeHead(404)
+  res.end()
+})
+
+internalServer.listen(8081, () => console.log('[Internal] HTTP server on port 8081'))
+
+// ── WS Server ─────────────────────────────────────────────────────────────────
 // maxPayload: reject any message larger than 64 KB to prevent DoS attacks
 const wss = new WebSocketServer({ port: 8080, maxPayload: 64 * 1024 })
 

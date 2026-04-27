@@ -143,6 +143,104 @@ app.get("/room/:roomId/shapes", middleware, async (req: Request<{ roomId: string
   res.json({ shapes });
 });
 
+// ── Invite a user to a room ───────────────────────────────────────────────────
+// Only the room admin can invite. Invited user gets a RoomMember row + Notification.
+// If they are currently online the WS backend will push it live via internal API.
+app.post("/room/:roomId/invite", middleware, async (req: Request<{ roomId: string }>, res) => {
+  // @ts-ignore
+  const callerId: string = req.userId;
+  const roomId = parseInt(req.params.roomId);
+  const { email, role } = req.body as { email: string; role?: "EDITOR" | "VIEWER" };
+
+  if (!email) return res.status(400).json({ message: "email is required" });
+
+  const assignedRole = role === "VIEWER" ? "VIEWER" : "EDITOR";
+
+  // Caller must be the room admin
+  const room = await prismaClient.room.findUnique({ where: { id: roomId } });
+  if (!room) return res.status(404).json({ message: "Room not found" });
+  if (room.adminId !== callerId) return res.status(403).json({ message: "Only the room owner can invite" });
+
+  // Find the user being invited
+  const invitee = await prismaClient.user.findUnique({ where: { email } });
+  if (!invitee) return res.status(404).json({ message: "No account found with that email" });
+
+  if (invitee.id === callerId) return res.status(400).json({ message: "You are already the owner" });
+
+  // Upsert membership (idempotent — re-inviting just updates the role)
+  await prismaClient.roomMember.upsert({
+    where: { userId_roomId: { userId: invitee.id, roomId } },
+    update: { role: assignedRole },
+    create: { userId: invitee.id, roomId, role: assignedRole },
+  });
+
+  // Create in-app notification
+  const inviter = await prismaClient.user.findUnique({
+    where: { id: callerId },
+    select: { name: true },
+  });
+
+  const notification = await prismaClient.notification.create({
+    data: {
+      userId: invitee.id,
+      roomId,
+      message: `${inviter?.name ?? "Someone"} invited you to room "${room.slug}" as ${assignedRole.toLowerCase()}`,
+    },
+  });
+
+  // Push live notification if the invitee is currently connected to WS backend
+  const WS_INTERNAL = process.env.WS_INTERNAL_URL ?? "http://localhost:8081";
+  fetch(`${WS_INTERNAL}/internal/notify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: invitee.id,
+      notification: {
+        id: notification.id,
+        message: notification.message,
+        roomId: notification.roomId,
+        createdAt: notification.createdAt,
+      },
+    }),
+  }).catch(() => {
+    // WS backend unreachable or user offline — notification already in DB, no action needed
+  });
+
+  res.json({ message: "Invited successfully" });
+});
+
+// ── Get notifications for the logged-in user ──────────────────────────────────
+app.get("/notifications", middleware, async (req, res) => {
+  // @ts-ignore
+  const userId: string = req.userId;
+
+  const notifications = await prismaClient.notification.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take: 30,
+  });
+
+  res.json({ notifications });
+});
+
+// ── Mark notifications as read ────────────────────────────────────────────────
+// Body: { ids: string[] }  — pass specific ids, or omit to mark ALL as read
+app.patch("/notifications/read", middleware, async (req, res) => {
+  // @ts-ignore
+  const userId: string = req.userId;
+  const { ids } = req.body as { ids?: string[] };
+
+  await prismaClient.notification.updateMany({
+    where: {
+      userId,
+      ...(ids?.length ? { id: { in: ids } } : {}),
+    },
+    data: { read: true },
+  });
+
+  res.json({ message: "Marked as read" });
+});
+
 app.listen(3001, () => {
   console.log("Server is running on port 3001");
 });

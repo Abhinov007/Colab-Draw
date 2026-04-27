@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./page.module.css";
 
@@ -11,12 +11,26 @@ interface Room {
   adminId: string;
 }
 
+interface Notification {
+  id: string;
+  message: string;
+  roomId: number | null;
+  read: boolean;
+  createdAt: string;
+}
+
 type ModalType = "signin" | "signup" | null;
 
 export default function Home() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
+
+  // notifications
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [showNotifs, setShowNotifs] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // modal
   const [modal, setModal] = useState<ModalType>(null);
@@ -38,7 +52,20 @@ export default function Home() {
     if (t) {
       setToken(t);
       fetchRooms(t);
+      fetchNotifications(t);
+      connectNotifWS(t);
     }
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setShowNotifs(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   async function fetchRooms(t: string) {
@@ -49,6 +76,49 @@ export default function Home() {
       const data = await res.json();
       setRooms(data.rooms);
     }
+  }
+
+  async function fetchNotifications(t: string) {
+    const res = await fetch("http://localhost:3001/notifications", {
+      headers: { Authorization: `Bearer ${t}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setNotifications(data.notifications);
+    }
+  }
+
+  // Open a WS connection solely to receive live notifications on the home page.
+  // Uses the same auth-as-first-message protocol as the room page.
+  function connectNotifWS(t: string) {
+    const ws = new WebSocket("ws://localhost:8080");
+    wsRef.current = ws;
+
+    ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: t }));
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "notification") {
+        setNotifications((prev) => [msg.notification, ...prev]);
+      }
+    };
+
+    ws.onclose = () => {
+      // Reconnect after 3s if still on page
+      setTimeout(() => {
+        const stored = localStorage.getItem("token");
+        if (stored) connectNotifWS(stored);
+      }, 3000);
+    };
+  }
+
+  async function markAllRead(t: string) {
+    await fetch("http://localhost:3001/notifications/read", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   }
 
   async function doSignIn(emailVal: string, passwordVal: string): Promise<string | null> {
@@ -114,8 +184,11 @@ export default function Home() {
   function handleSignOut() {
     localStorage.removeItem("token");
     localStorage.removeItem("userId");
+    wsRef.current?.close();
+    wsRef.current = null;
     setToken(null);
     setRooms([]);
+    setNotifications([]);
   }
 
   return (
@@ -125,7 +198,82 @@ export default function Home() {
         <span className={styles.brand}>ColabDraw</span>
         <div className={styles.navActions}>
           {token ? (
-            <button className={styles.btnOutline} onClick={handleSignOut}>Sign Out</button>
+            <>
+              {/* Notification Bell */}
+              <div ref={notifRef} style={{ position: "relative" }}>
+                <button
+                  className={styles.btnOutline}
+                  style={{ position: "relative", padding: "6px 12px" }}
+                  onClick={() => {
+                    setShowNotifs((v) => !v);
+                    if (!showNotifs && notifications.some((n) => !n.read)) {
+                      markAllRead(token);
+                    }
+                  }}
+                  title="Notifications"
+                >
+                  🔔
+                  {notifications.some((n) => !n.read) && (
+                    <span style={{
+                      position: "absolute", top: 2, right: 2,
+                      background: "#ef4444", color: "#fff",
+                      borderRadius: "50%", fontSize: 10,
+                      width: 16, height: 16,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 700, lineHeight: 1,
+                    }}>
+                      {notifications.filter((n) => !n.read).length}
+                    </span>
+                  )}
+                </button>
+
+                {showNotifs && (
+                  <div style={{
+                    position: "absolute", right: 0, top: "calc(100% + 8px)",
+                    width: 320, background: "#fff", border: "1px solid #e2e8f0",
+                    borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                    zIndex: 100, overflow: "hidden",
+                  }}>
+                    <div style={{
+                      padding: "12px 16px", borderBottom: "1px solid #f1f5f9",
+                      fontWeight: 600, fontSize: 14, color: "#1e293b",
+                    }}>
+                      Notifications
+                    </div>
+                    {notifications.length === 0 ? (
+                      <p style={{ padding: "20px 16px", color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                        No notifications yet.
+                      </p>
+                    ) : (
+                      <ul style={{ margin: 0, padding: 0, listStyle: "none", maxHeight: 360, overflowY: "auto" }}>
+                        {notifications.map((n) => (
+                          <li
+                            key={n.id}
+                            onClick={() => n.roomId && router.push(`/rooms/${n.roomId}`)}
+                            style={{
+                              padding: "12px 16px",
+                              borderBottom: "1px solid #f8fafc",
+                              background: n.read ? "#fff" : "#f0f9ff",
+                              cursor: n.roomId ? "pointer" : "default",
+                              transition: "background 0.15s",
+                            }}
+                          >
+                            <p style={{ margin: 0, fontSize: 13, color: "#334155", lineHeight: 1.4 }}>
+                              {n.message}
+                            </p>
+                            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#94a3b8" }}>
+                              {new Date(n.createdAt).toLocaleString()}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button className={styles.btnOutline} onClick={handleSignOut}>Sign Out</button>
+            </>
           ) : (
             <>
               <button className={styles.btnOutline} onClick={() => { setModal("signin"); setAuthError(""); }}>Sign In</button>
