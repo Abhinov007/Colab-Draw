@@ -26,6 +26,11 @@ export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
 
+  // user info
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
   // notifications
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
@@ -53,20 +58,34 @@ export default function Home() {
       setToken(t);
       fetchRooms(t);
       fetchNotifications(t);
+      fetchUser(t);
       connectNotifWS(t);
     }
   }, []);
 
-  // Close dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
         setShowNotifs(false);
       }
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  async function fetchUser(t: string) {
+    const res = await fetch("http://localhost:3001/me", {
+      headers: { Authorization: `Bearer ${t}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setUser(data.user);
+    }
+  }
 
   async function fetchRooms(t: string) {
     const res = await fetch("http://localhost:3001/rooms", {
@@ -135,6 +154,7 @@ export default function Home() {
     setModal(null);
     setEmail(""); setPassword(""); setName("");
     fetchRooms(data.token);
+    fetchUser(data.token);
     return null;
   }
 
@@ -189,6 +209,8 @@ export default function Home() {
     setToken(null);
     setRooms([]);
     setNotifications([]);
+    setUser(null);
+    setShowUserMenu(false);
   }
 
   return (
@@ -272,7 +294,34 @@ export default function Home() {
                 )}
               </div>
 
-              <button className={styles.btnOutline} onClick={handleSignOut}>Sign Out</button>
+              {/* User avatar */}
+              <div ref={userMenuRef} style={{ position: "relative" }}>
+                <button
+                  className={styles.avatarBtn}
+                  onClick={() => setShowUserMenu((v) => !v)}
+                  title={user?.name ?? "Account"}
+                >
+                  {user?.name ? user.name[0]!.toUpperCase() : "?"}
+                </button>
+
+                {showUserMenu && (
+                  <div className={styles.userMenu}>
+                    <div className={styles.userMenuHeader}>
+                      <div className={styles.userMenuAvatar}>
+                        {user?.name ? user.name[0]!.toUpperCase() : "?"}
+                      </div>
+                      <div>
+                        <p className={styles.userMenuName}>{user?.name ?? "—"}</p>
+                        <p className={styles.userMenuEmail}>{user?.email ?? "—"}</p>
+                      </div>
+                    </div>
+                    <div className={styles.userMenuDivider} />
+                    <button className={styles.userMenuSignOut} onClick={handleSignOut}>
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <>

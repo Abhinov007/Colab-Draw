@@ -102,6 +102,17 @@ app.post("/signin", authLimiter, async (req, res) => {
 
   res.json({ token, userId: user.id });
 });
+app.get("/me", middleware, async (req, res) => {
+  // @ts-ignore
+  const userId: string = req.userId;
+  const user = await prismaClient.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true },
+  });
+  if (!user) return res.status(404).json({ message: "User not found" });
+  res.json({ user });
+});
+
 app.post("/room", middleware, async (req, res) => {
   const data = CreateRoomSchema.safeParse(req.body);
 
@@ -122,6 +133,18 @@ app.post("/room", middleware, async (req, res) => {
   res.json({
     roomId: room.id,
   });
+});
+
+// ── Current user info ────────────────────────────────────────────────────────
+app.get("/me", middleware, async (req, res) => {
+  // @ts-ignore
+  const userId: string = req.userId;
+  const user = await prismaClient.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true },
+  });
+  if (!user) return res.status(404).json({ message: "User not found" });
+  res.json({ user });
 });
 
 app.get("/rooms", middleware, async (req, res) => {

@@ -172,6 +172,98 @@
   pointer-events: none;
 }
 
+/* ── User avatar button ── */
+.avatarBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+}
+.avatarBtn:hover { background: #4f46e5; box-shadow: 0 0 0 3px rgba(99,102,241,0.3); }
+
+/* ── User dropdown menu ── */
+.userMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 240px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.userMenuHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.userMenuAvatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #6366f1;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.userMenuName {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.userMenuEmail {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.userMenuDivider {
+  height: 1px;
+  background: #2a2a2a;
+}
+
+.userMenuSignOut {
+  display: block;
+  width: 100%;
+  padding: 11px 16px;
+  background: transparent;
+  border: none;
+  color: #f87171;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.userMenuSignOut:hover { background: #1f1f1f; }
+
 /* ── Modal ── */
 .modalOverlay {
   position: fixed;
