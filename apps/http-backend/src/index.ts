@@ -11,13 +11,20 @@ const app = express();
 app.use(express.json());
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
-// Allow only the frontend origin. In production set ALLOWED_ORIGIN in env.
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? "http://localhost:3000";
+// Comma-separated list of allowed origins.
+// In production set ALLOWED_ORIGINS in env (e.g. on Railway).
+const ALLOWED_ORIGINS: string[] = (
+  process.env.ALLOWED_ORIGINS ??
+  "http://localhost:3000,https://colab-draw-web.vercel.app"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 app.use((req: Request, res: Response, next: NextFunction) => {
-  const origin = req.headers.origin;
-  if (origin === ALLOWED_ORIGIN) {
-    res.header("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+  const origin = req.headers.origin ?? "";
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
   }
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -29,11 +36,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 // Applies only to auth endpoints to block brute-force attempts.
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,                   // max 10 attempts per IP per window
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many attempts, please try again after 15 minutes" },
+  // Skip localhost so load tests and local dev are never blocked
+  skip: (req) => req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1",
 });
 
 app.get("/", (req, res) => {

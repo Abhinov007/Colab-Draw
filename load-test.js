@@ -28,7 +28,7 @@ const WS_URL    = "ws://localhost:8080";
 
 // A single test account — all VUs share it (simplest setup).
 // For multi-user isolation create N accounts and use __VU index.
-const EMAIL    = "alice@test.com";
+const EMAIL    = "bob@test.com";
 const PASSWORD = "password123";
 const ROOM_ID  = "6";           // <-- set to your room ID
 
@@ -56,19 +56,22 @@ export const options = {
   },
 };
 
-// ── Main VU function ──────────────────────────────────────────────────────────
-export default function () {
-  // 1. Sign in via HTTP to get a JWT
-  const signInRes = http.post(
+// ── Setup: sign in once, share token across all VUs ──────────────────────────
+// Avoids hammering /signin per-VU which would trip the rate limiter immediately.
+export function setup() {
+  const res = http.post(
     `${HTTP_BASE}/signin`,
     JSON.stringify({ email: EMAIL, password: PASSWORD }),
     { headers: { "Content-Type": "application/json" } }
   );
+  if (res.status !== 200) {
+    throw new Error(`Sign-in failed: ${res.status} ${res.body}`);
+  }
+  return { token: res.json("token") };
+}
 
-  const ok = check(signInRes, { "signed in": (r) => r.status === 200 });
-  if (!ok) { wsErrors.add(1); return; }
-
-  const token = signInRes.json("token");
+// ── Main VU function ──────────────────────────────────────────────────────────
+export default function ({ token }) {
 
   // 2. Open WebSocket
   const res = ws.connect(WS_URL, {}, function (socket) {

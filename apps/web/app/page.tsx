@@ -4,6 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./page.module.css";
 
+const HTTP_URL = "/api";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080";
+
 interface Room {
   id: number;
   slug: string;
@@ -78,7 +81,7 @@ export default function Home() {
   }, []);
 
   async function fetchUser(t: string) {
-    const res = await fetch("http://localhost:3001/me", {
+    const res = await fetch(`${HTTP_URL}/me`, {
       headers: { Authorization: `Bearer ${t}` },
     });
     if (res.ok) {
@@ -88,7 +91,7 @@ export default function Home() {
   }
 
   async function fetchRooms(t: string) {
-    const res = await fetch("http://localhost:3001/rooms", {
+    const res = await fetch(`${HTTP_URL}/rooms`, {
       headers: { Authorization: `Bearer ${t}` },
     });
     if (res.ok) {
@@ -98,7 +101,7 @@ export default function Home() {
   }
 
   async function fetchNotifications(t: string) {
-    const res = await fetch("http://localhost:3001/notifications", {
+    const res = await fetch(`${HTTP_URL}/notifications`, {
       headers: { Authorization: `Bearer ${t}` },
     });
     if (res.ok) {
@@ -110,7 +113,7 @@ export default function Home() {
   // Open a WS connection solely to receive live notifications on the home page.
   // Uses the same auth-as-first-message protocol as the room page.
   function connectNotifWS(t: string) {
-    const ws = new WebSocket("ws://localhost:8080");
+    const ws = new WebSocket(`${WS_URL}`);
     wsRef.current = ws;
 
     ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: t }));
@@ -132,7 +135,7 @@ export default function Home() {
   }
 
   async function markAllRead(t: string) {
-    await fetch("http://localhost:3001/notifications/read", {
+    await fetch(`${HTTP_URL}/notifications/read`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -141,7 +144,7 @@ export default function Home() {
   }
 
   async function doSignIn(emailVal: string, passwordVal: string): Promise<string | null> {
-    const res = await fetch("http://localhost:3001/signin", {
+    const res = await fetch(`${HTTP_URL}/signin`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: emailVal, password: passwordVal }),
@@ -166,7 +169,7 @@ export default function Home() {
 
   async function handleSignUp() {
     setAuthError("");
-    const res = await fetch("http://localhost:3001/signup", {
+    const res = await fetch(`${HTTP_URL}/signup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, email, password }),
@@ -180,7 +183,7 @@ export default function Home() {
   async function handleCreateRoom() {
     if (!roomName.trim() || !token) return;
     setRoomError("");
-    const res = await fetch("http://localhost:3001/room", {
+    const res = await fetch(`${HTTP_URL}/room`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ name: roomName.trim() }),
@@ -193,7 +196,7 @@ export default function Home() {
   async function handleJoinRoom() {
     if (!joinSlug.trim() || !token) return;
     setJoinError("");
-    const res = await fetch(`http://localhost:3001/room/slug/${joinSlug.trim()}`, {
+    const res = await fetch(`${HTTP_URL}/room/slug/${joinSlug.trim()}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();

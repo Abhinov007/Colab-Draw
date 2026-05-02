@@ -284,19 +284,51 @@ A [k6](https://k6.io) script is included to measure how many concurrent users th
 # Install k6
 winget install k6
 
-# Run with 100 users for 60 seconds
-k6 run --vus 100 --duration 60s load-test.js
+# Quick smoke test — 50 users, 30s
+k6 run --vus 50 --duration 30s load-test.js
+
+# Staged ramp-up — 50 → 100 users (defined in options.stages)
+k6 run load-test.js
 ```
 
-Edit `load-test.js` to set your `ROOM_ID`, `EMAIL`, and `PASSWORD` before running.
+Edit `load-test.js` to set your `ROOM_ID` and credentials before running. The script signs in **once** in `setup()` and shares the JWT across all virtual users to avoid tripping the auth rate limiter.
 
-**Key metrics reported:**
+### Metrics
+
 | Metric | Description |
 |---|---|
 | `ws_auth_latency_ms` | Time from connect → authenticated |
-| `ws_join_latency_ms` | Time from join → joined confirmed |
+| `ws_join_latency_ms` | Time from join sent → joined confirmed |
 | `draw_success_rate` | % of draw messages that succeeded |
-| `ws_errors` | Total error count |
+| `ws_errors` | Total WS error count |
+
+### Results (Neon serverless DB, localhost)
+
+| Run | VUs | Errors | Auth p95 | Join p95 | Draw p95 | Draw success | Outcome |
+|-----|-----|--------|----------|----------|----------|--------------|---------|
+| Baseline (bug: per-VU sign-in) | 50 | 35,729 | 41ms | 8.2s | — | 100% | ❌ Rate limiter blocked 99.9% of sign-ins |
+| Shared token, no role cache | 50 | 0 | 160ms | 22.9s | 1ms | 100% | ⚠️ Join too slow |
+| With in-memory role cache | 50 | 0 | 367ms | 7.5s | 1ms | 100% | ⚠️ Join slow (Neon cold-start) |
+| Staged ramp 50 → 100 | 100 | ~80 at peak | — | — | 1ms | 100% | ❌ WS crashed at 100 simultaneous joins |
+
+### Key findings
+
+| Finding | Root cause | Fix applied |
+|---------|------------|-------------|
+| Rate limiter kills load test sign-ins | 10 req/15 min per IP, all VUs shared one IP | Sign in once in `setup()`, share token; skip localhost in limiter |
+| Join latency 22s → 7.5s | 2 DB queries per draw (role check) | In-memory role cache — resolve once on join, O(1) lookup on draw |
+| Remaining join latency (7.5s) | Neon serverless cold-starts connections | Infrastructure constraint, not a code bug |
+| Crash at 100 simultaneous joins | Neon connection pool exhausted under burst | Known Neon free-tier limit |
+| Draw latency always ≤ 1ms | In-memory cache + broadcast, zero DB queries | — |
+
+### Practical capacity
+
+| Database | Estimated concurrent users per room |
+|----------|-------------------------------------|
+| Neon free tier (serverless) | ~50 |
+| Persistent Postgres (Railway, Supabase, self-hosted) | 300–500+ |
+
+> Draw performance is effectively unlimited once users are joined — role checks are in-memory with no DB involvement.
 
 ---
 

@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import styles from "./page.module.css";
+
+const HTTP_URL = "/api";
+const WS_URL   = process.env.NEXT_PUBLIC_WS_URL   ?? "ws://localhost:8080";
 import {
   hitTestRect,
   hitTestCircle,
@@ -117,7 +120,7 @@ export default function RoomPage() {
     if (!token) { router.push("/"); return; }
 
     // Load existing shapes — hydrate id from DB row
-    fetch(`http://localhost:3001/room/${roomId}/shapes`, {
+    fetch(`${HTTP_URL}/room/${roomId}/shapes`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
@@ -134,7 +137,7 @@ export default function RoomPage() {
       .catch(() => {});
 
     // Fetch role for this room
-    fetch(`http://localhost:3001/room/${roomId}/my-role`, {
+    fetch(`${HTTP_URL}/room/${roomId}/my-role`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
@@ -143,7 +146,7 @@ export default function RoomPage() {
 
     // Fetch room name + detect if current user is admin
     const userId = localStorage.getItem("userId");
-    fetch(`http://localhost:3001/rooms`, {
+    fetch(`${HTTP_URL}/rooms`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
@@ -162,7 +165,7 @@ export default function RoomPage() {
 
       // ── Security: token is NOT in the URL (would leak to server/proxy logs).
       // Instead we send it as the very first message after the connection opens.
-      const ws = new WebSocket("ws://localhost:8080");
+      const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -387,7 +390,7 @@ export default function RoomPage() {
     setInviteStatus(null);
     const token = localStorage.getItem("token");
     try {
-      const res = await fetch(`http://localhost:3001/room/${roomId}/invite`, {
+      const res = await fetch(`${HTTP_URL}/room/${roomId}/invite`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),

@@ -38,9 +38,10 @@ internalServer.listen(8081, () => console.log('[Internal] HTTP server on port 80
 const wss = new WebSocketServer({ port: 8080, maxPayload: 64 * 1024 })
 
 // ── In-memory state ───────────────────────────────────────────────────────────
-const clients   = new Map<string, WebSocket>()   // userId  → socket
-const rooms     = new Map<string, Set<string>>() // roomId  → Set<userId>
-const userRooms = new Map<string, Set<string>>() // userId  → Set<roomId>
+const clients   = new Map<string, WebSocket>()                    // userId        → socket
+const rooms     = new Map<string, Set<string>>()                  // roomId        → Set<userId>
+const userRooms = new Map<string, Set<string>>()                  // userId        → Set<roomId>
+const roleCache = new Map<string, 'OWNER' | 'EDITOR' | 'VIEWER'>() // userId:roomId → role
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
 function verifyToken(token: string): string | null {
@@ -54,21 +55,31 @@ function verifyToken(token: string): string | null {
   }
 }
 
-// ── Role helper ───────────────────────────────────────────────────────────────
-// Returns true if the user can draw/erase (OWNER or EDITOR), false if VIEWER
-async function checkCanEdit(userId: string, roomId: string): Promise<boolean> {
+// ── Role helpers ──────────────────────────────────────────────────────────────
+// Resolve role from DB once on join, then read from cache on every draw/erase.
+async function resolveRole(userId: string, roomId: string): Promise<'OWNER' | 'EDITOR' | 'VIEWER' | null> {
   const room = await prismaClient.room.findUnique({
     where: { id: parseInt(roomId) },
     select: { adminId: true },
   })
-  if (!room) return false
-  if (room.adminId === userId) return true   // OWNER always can edit
+  if (!room) return null
+  if (room.adminId === userId) return 'OWNER'
 
   const member = await prismaClient.roomMember.findUnique({
     where: { userId_roomId: { userId, roomId: parseInt(roomId) } },
     select: { role: true },
   })
-  return member?.role === 'EDITOR'
+  if (!member) return null
+  return member.role as 'EDITOR' | 'VIEWER'
+}
+
+function canEdit(userId: string, roomId: string): boolean {
+  const role = roleCache.get(`${userId}:${roomId}`)
+  return role === 'OWNER' || role === 'EDITOR'
+}
+
+function evictRole(userId: string, roomId: string) {
+  roleCache.delete(`${userId}:${roomId}`)
 }
 
 // ── Broadcast helper ──────────────────────────────────────────────────────────
@@ -153,16 +164,14 @@ wss.on('connection', (ws) => {
         return
       }
 
-      // Room authorization — verify the room exists in DB before admitting
-      const room = await prismaClient.room.findUnique({
-        where: { id: parseInt(roomId) },
-        select: { id: true },
-      })
-
-      if (!room) {
+      // Resolve role from DB (once per join) and cache it
+      const role = await resolveRole(userId, roomId)
+      if (!role) {
         ws.send(JSON.stringify({ type: 'error', code: 403, message: 'Room not found or access denied' }))
         return
       }
+
+      roleCache.set(`${userId}:${roomId}`, role)
 
       if (!rooms.has(roomId)) rooms.set(roomId, new Set())
       if (!userRooms.has(userId)) userRooms.set(userId, new Set())
@@ -170,7 +179,7 @@ wss.on('connection', (ws) => {
       rooms.get(roomId)!.add(userId)
       userRooms.get(userId)!.add(roomId)
 
-      ws.send(JSON.stringify({ type: 'joined', roomId }))
+      ws.send(JSON.stringify({ type: 'joined', roomId, role }))
       return
     }
 
@@ -178,6 +187,7 @@ wss.on('connection', (ws) => {
     if (type === 'leave') {
       rooms.get(roomId)?.delete(userId)
       userRooms.get(userId)?.delete(roomId)
+      evictRole(userId, roomId)
       return
     }
 
@@ -188,8 +198,8 @@ wss.on('connection', (ws) => {
         return
       }
 
-      // Role check — VIEWERs cannot draw
-      if (!(await checkCanEdit(userId, roomId))) {
+      // Role check — O(1) cache lookup, no DB query
+      if (!canEdit(userId, roomId)) {
         ws.send(JSON.stringify({ type: 'error', code: 403, message: 'Viewers cannot edit' }))
         return
       }
@@ -217,8 +227,8 @@ wss.on('connection', (ws) => {
         return
       }
 
-      // Role check — VIEWERs cannot erase
-      if (!(await checkCanEdit(userId, roomId))) {
+      // Role check — O(1) cache lookup, no DB query
+      if (!canEdit(userId, roomId)) {
         ws.send(JSON.stringify({ type: 'error', code: 403, message: 'Viewers cannot edit' }))
         return
       }
@@ -268,7 +278,10 @@ wss.on('connection', (ws) => {
     // Stale-socket guard: only clean up if this is still the active socket
     if (clients.get(userId) !== ws) return
 
-    userRooms.get(userId)?.forEach((rid) => rooms.get(rid)?.delete(userId!))
+    userRooms.get(userId)?.forEach((rid) => {
+      rooms.get(rid)?.delete(userId!)
+      evictRole(userId!, rid)
+    })
     clients.delete(userId)
     userRooms.delete(userId)
   })
