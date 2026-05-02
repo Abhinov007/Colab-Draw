@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import styles from "./page.module.css";
 
 const HTTP_URL = "/api";
-const WS_URL   = process.env.NEXT_PUBLIC_WS_URL   ?? "ws://localhost:8080";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL;
 import {
   hitTestRect,
   hitTestCircle,
@@ -55,6 +55,14 @@ export default function RoomPage() {
   const [roomSlug, setRoomSlug] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [role, setRole] = useState<"OWNER" | "EDITOR" | "VIEWER" | null>(null);
+
+  const resolveWsUrl = useCallback(() => {
+    if (WS_URL) return WS_URL;
+    if (typeof window !== "undefined" && window.location.protocol === "https:") {
+      return `wss://${window.location.host}`;
+    }
+    return "ws://localhost:8080";
+  }, []);
 
   // Invite modal
   const [showInvite, setShowInvite] = useState(false);
@@ -165,7 +173,7 @@ export default function RoomPage() {
 
       // ── Security: token is NOT in the URL (would leak to server/proxy logs).
       // Instead we send it as the very first message after the connection opens.
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(resolveWsUrl());
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -222,7 +230,7 @@ export default function RoomPage() {
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
       wsRef.current?.close();
     };
-  }, [roomId, router, redrawCanvas]);
+  }, [roomId, router, redrawCanvas, resolveWsUrl]);
 
   const getPos = (e: React.MouseEvent<HTMLCanvasElement>): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
