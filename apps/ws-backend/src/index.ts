@@ -218,7 +218,7 @@ wss.on('connection', (ws) => {
           type: shape.type,
           data: JSON.stringify(shape.data),
         },
-      }).catch((err) => console.error('[DB] Failed to save shape:', err))
+      }).catch((err: unknown) => console.error('[DB] Failed to save shape:', err))
 
       return
     }
@@ -241,7 +241,7 @@ wss.on('connection', (ws) => {
       prismaClient.shape.updateMany({
         where: { id: { in: deletedShapeIds } },
         data: { isDeleted: true },
-      }).catch((err) => console.error('[DB] Failed to soft-delete shapes:', err))
+      }).catch((err: unknown) => console.error('[DB] Failed to soft-delete shapes:', err))
 
       return
     }
