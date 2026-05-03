@@ -4,7 +4,10 @@ import jwt from 'jsonwebtoken'
 import { JWT_SECRET } from '@repo/backend-common/config'
 import { prismaClient } from '@repo/db/client'
 
-// ── Internal HTTP server (port 8081) ─────────────────────────────────────────
+const WS_PORT = Number(process.env.PORT ?? 8080)
+const INTERNAL_PORT = Number(process.env.INTERNAL_PORT ?? 8081)
+
+// ── Internal HTTP server ─────────────────────────────────────────────────────
 // Used by the HTTP backend to push live notifications to online users.
 // Never exposed to the internet — only reachable from within the same host/network.
 const internalServer = http.createServer((req, res) => {
@@ -31,11 +34,11 @@ const internalServer = http.createServer((req, res) => {
   res.end()
 })
 
-internalServer.listen(8081, () => console.log('[Internal] HTTP server on port 8081'))
+internalServer.listen(INTERNAL_PORT, () => console.log(`[Internal] HTTP server on port ${INTERNAL_PORT}`))
 
 // ── WS Server ─────────────────────────────────────────────────────────────────
 // maxPayload: reject any message larger than 64 KB to prevent DoS attacks
-const wss = new WebSocketServer({ port: 8080, maxPayload: 64 * 1024 })
+const wss = new WebSocketServer({ port: WS_PORT, host: '0.0.0.0', maxPayload: 64 * 1024 })
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 const clients   = new Map<string, WebSocket>()                    // userId        → socket
@@ -289,4 +292,4 @@ wss.on('connection', (ws) => {
   ws.on('error', (err) => console.error('[WS] Socket error:', err.message))
 })
 
-console.log('[WS] Server listening on port 8080')
+console.log(`[WS] Server listening on port ${WS_PORT}`)
