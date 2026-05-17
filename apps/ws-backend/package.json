@@ -17,6 +17,9 @@
     "jsonwebtoken": "^9.0.3",
     "ws": "^8.20.0"
   },
+  "devDependencies": {
+    "@types/node": "^22.15.3"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC"
